@@ -24,6 +24,7 @@ jobs:
       registry_username: ${{ github.repository_owner }}
       artifact_prefix: ghcr
       create_release: false
+      checkout_submodules: false
     secrets:
       build_app_id: ${{ secrets.BUILD_APP_ID }}
       build_app_private_key: ${{ secrets.BUILD_APP_PRIVATE_KEY }}
