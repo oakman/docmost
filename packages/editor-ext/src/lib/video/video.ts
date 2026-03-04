@@ -231,6 +231,13 @@ export const TiptapVideo = Node.create<VideoOptions>({
       el.style.maxWidth = "100%";
       el.style.borderRadius = "8px";
 
+      if (typeof node.attrs.width === "number" && node.attrs.width > 0) {
+        el.style.width = `${node.attrs.width}px`;
+        if (typeof node.attrs.height === "number" && node.attrs.height > 0) {
+          el.style.height = `${node.attrs.height}px`;
+        }
+      }
+
       let currentNode = node;
 
       const nodeView = new ResizableNodeView({
@@ -319,12 +326,14 @@ export const TiptapVideo = Node.create<VideoOptions>({
         });
       }
 
-      // Hide until video metadata loads
-      dom.style.visibility = "hidden";
+      // Show skeleton background while video loads from server
       dom.style.pointerEvents = "none";
+      dom.style.background =
+        "light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-6))";
+
       el.onloadedmetadata = () => {
-        dom.style.visibility = "";
         dom.style.pointerEvents = "";
+        dom.style.background = "";
       };
 
       return nodeView;
