@@ -25,13 +25,16 @@ import { CacheModule } from '@nestjs/cache-manager';
 import KeyvRedis from '@keyv/redis';
 import { LoggerModule } from './common/logger/logger.module';
 import { ClsModule } from 'nestjs-cls';
+import { AuditFallbackModule } from './integrations/audit/audit-fallback.module';
 
 const enterpriseModules = [];
+let useAuditFallbackModule = true;
 try {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  if (require('./ee/ee.module')?.EeModule) {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    enterpriseModules.push(require('./ee/ee.module')?.EeModule);
+  const eeModule = require('./ee/ee.module')?.EeModule;
+  if (eeModule) {
+    enterpriseModules.push(eeModule);
+    useAuditFallbackModule = false;
   }
 } catch (err) {
   if (process.env.CLOUD === 'true') {
@@ -39,6 +42,7 @@ try {
     process.exit(1);
   }
 }
+const auditModules = useAuditFallbackModule ? [AuditFallbackModule] : [];
 
 @Module({
   imports: [
@@ -81,6 +85,7 @@ try {
     EventEmitterModule.forRoot(),
     SecurityModule,
     TelemetryModule,
+    ...auditModules,
     ...enterpriseModules,
   ],
   controllers: [AppController],
