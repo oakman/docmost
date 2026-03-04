@@ -1,0 +1,30 @@
+name: Release GHCR
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version tag (e.g. v0.25.3)
+        required: true
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  release:
+    uses: ./.github/workflows/release-registry.yml
+    with:
+      version: ${{ inputs.version || github.ref_name }}
+      image: ghcr.io/${{ github.repository_owner }}/docmost
+      registry: ghcr.io
+      registry_username: ${{ github.repository_owner }}
+      artifact_prefix: ghcr
+      create_release: false
+    secrets:
+      build_app_id: ${{ secrets.BUILD_APP_ID }}
+      build_app_private_key: ${{ secrets.BUILD_APP_PRIVATE_KEY }}
+      registry_password: ${{ secrets.GITHUB_TOKEN }}

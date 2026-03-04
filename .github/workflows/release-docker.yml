@@ -1,0 +1,30 @@
+name: Release Docker Hub
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version tag (e.g. v0.25.3)
+        required: true
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  release:
+    uses: ./.github/workflows/release-registry.yml
+    with:
+      version: ${{ inputs.version || github.ref_name }}
+      image: docmost/docmost
+      registry: docker.io
+      registry_username: ${{ secrets.DOCKERHUB_USERNAME }}
+      artifact_prefix: dockerhub
+      create_release: true
+    secrets:
+      build_app_id: ${{ secrets.BUILD_APP_ID }}
+      build_app_private_key: ${{ secrets.BUILD_APP_PRIVATE_KEY }}
+      registry_password: ${{ secrets.DOCKERHUB_TOKEN }}

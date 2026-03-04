@@ -1,20 +1,49 @@
-name: Release
+name: Release Registry (Reusable)
 
 on:
-  push:
-    tags:
-      - 'v*'
-  workflow_dispatch:
+  workflow_call:
     inputs:
       version:
-        description: 'Version tag (e.g. v0.25.3)'
+        description: Version tag (e.g. v0.25.3)
+        required: true
+        type: string
+      image:
+        description: Full image name (e.g. docmost/docmost)
+        required: true
+        type: string
+      registry:
+        description: Registry host (e.g. docker.io or ghcr.io)
+        required: true
+        type: string
+      registry_username:
+        description: Registry username
+        required: true
+        type: string
+      artifact_prefix:
+        description: Prefix for workflow artifacts
+        required: true
+        type: string
+      create_release:
+        description: Create GitHub release with image archives
+        required: false
+        default: false
+        type: boolean
+    secrets:
+      build_app_id:
+        required: true
+      build_app_private_key:
+        required: true
+      registry_password:
         required: true
 
 permissions:
   contents: write
+  packages: write
 
 env:
-  VERSION: ${{ inputs.version || github.ref_name }}
+  VERSION: ${{ inputs.version }}
+  IMAGE: ${{ inputs.image }}
+  ARTIFACT_PREFIX: ${{ inputs.artifact_prefix }}
 
 jobs:
   build:
@@ -33,8 +62,8 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@v1
         with:
-          app-id: ${{ secrets.BUILD_APP_ID }}
-          private-key: ${{ secrets.BUILD_APP_PRIVATE_KEY }}
+          app-id: ${{ secrets.build_app_id }}
+          private-key: ${{ secrets.build_app_private_key }}
           owner: ${{ github.repository_owner }}
 
       - name: Checkout with submodules
@@ -46,11 +75,12 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Login to Docker Hub
+      - name: Login to registry
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ${{ inputs.registry }}
+          username: ${{ inputs.registry_username }}
+          password: ${{ secrets.registry_password }}
 
       - name: Build and push by digest
         id: build
@@ -58,9 +88,9 @@ jobs:
         with:
           context: .
           platforms: ${{ matrix.platform }}
-          outputs: type=image,name=docmost/docmost,push-by-digest=true,name-canonical=true,push=true
-          cache-from: type=gha,scope=${{ matrix.suffix }}
-          cache-to: type=gha,scope=${{ matrix.suffix }},mode=max
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ env.ARTIFACT_PREFIX }}-${{ matrix.suffix }}
+          cache-to: type=gha,scope=${{ env.ARTIFACT_PREFIX }}-${{ matrix.suffix }},mode=max
 
       - name: Export digest
         run: |
@@ -71,34 +101,38 @@ jobs:
       - name: Upload digest
         uses: actions/upload-artifact@v4
         with:
-          name: digest-${{ matrix.suffix }}
+          name: ${{ env.ARTIFACT_PREFIX }}-digest-${{ matrix.suffix }}
           path: /tmp/digests/*
           if-no-files-found: error
 
       - name: Strip v prefix
+        if: ${{ inputs.create_release }}
         id: strip-v
         run: echo "version=${VERSION#v}" >> "$GITHUB_OUTPUT"
-        
+
       - name: Export Docker image
+        if: ${{ inputs.create_release }}
         uses: docker/build-push-action@v6
         with:
           context: .
           platforms: ${{ matrix.platform }}
           push: false
           tags: |
-            docmost/docmost:latest
-            docmost/docmost:${{ steps.strip-v.outputs.version }}
-          outputs: type=docker,dest=docmost-${{ matrix.suffix }}.docker.tar
-          cache-from: type=gha,scope=${{ matrix.suffix }}
+            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:${{ steps.strip-v.outputs.version }}
+          outputs: type=docker,dest=${{ env.ARTIFACT_PREFIX }}-${{ matrix.suffix }}.docker.tar
+          cache-from: type=gha,scope=${{ env.ARTIFACT_PREFIX }}-${{ matrix.suffix }}
 
       - name: Compress image
-        run: gzip docmost-${{ matrix.suffix }}.docker.tar
+        if: ${{ inputs.create_release }}
+        run: gzip ${{ env.ARTIFACT_PREFIX }}-${{ matrix.suffix }}.docker.tar
 
       - name: Upload image archive
+        if: ${{ inputs.create_release }}
         uses: actions/upload-artifact@v4
         with:
-          name: docker-image-${{ matrix.suffix }}
-          path: docmost-${{ matrix.suffix }}.docker.tar.gz
+          name: ${{ env.ARTIFACT_PREFIX }}-docker-image-${{ matrix.suffix }}
+          path: ${{ env.ARTIFACT_PREFIX }}-${{ matrix.suffix }}.docker.tar.gz
           if-no-files-found: error
 
   release:
@@ -108,24 +142,25 @@ jobs:
       - name: Download digests
         uses: actions/download-artifact@v4
         with:
-          pattern: digest-*
+          pattern: ${{ env.ARTIFACT_PREFIX }}-digest-*
           path: /tmp/digests
           merge-multiple: true
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Login to Docker Hub
+      - name: Login to registry
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ${{ inputs.registry }}
+          username: ${{ inputs.registry_username }}
+          password: ${{ secrets.registry_password }}
 
       - name: Extract metadata for tags
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: docmost/docmost
+          images: ${{ env.IMAGE }}
           tags: |
             type=semver,pattern={{version}},value=${{ env.VERSION }}
             type=semver,pattern={{major}}.{{minor}},value=${{ env.VERSION }},enable=${{ !contains(env.VERSION, '-') }}
@@ -133,22 +168,26 @@ jobs:
 
       - name: Create manifest list and push
         working-directory: /tmp/digests
+        env:
+          DOCKER_METADATA_OUTPUT_JSON: ${{ steps.meta.outputs.json }}
         run: |
           docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
-            $(printf 'docmost/docmost@sha256:%s ' *)
+            $(printf '${{ env.IMAGE }}@sha256:%s ' *)
 
       - name: Download image archives
+        if: ${{ inputs.create_release }}
         uses: actions/download-artifact@v4
         with:
-          pattern: docker-image-*
+          pattern: ${{ env.ARTIFACT_PREFIX }}-docker-image-*
           path: /tmp/images
           merge-multiple: true
 
       - name: Create GitHub Release
+        if: ${{ inputs.create_release }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.VERSION }}
           files: |
-            /tmp/images/docmost-amd64.docker.tar.gz
-            /tmp/images/docmost-arm64.docker.tar.gz
+            /tmp/images/${{ env.ARTIFACT_PREFIX }}-amd64.docker.tar.gz
+            /tmp/images/${{ env.ARTIFACT_PREFIX }}-arm64.docker.tar.gz
           draft: true
